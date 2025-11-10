@@ -68,11 +68,11 @@ Scripts for comparing developmental trajectories between ADHD and TD groups and 
 
 ### `S4_association_ADHDsymp_SCstrength`  
 Scripts for examining symptom relevance and treatment associations with deviations in structural connectivity strength.  
-3. `S1_ADHDsymp_SCstrengthDeviation_ABCD.Rmd`: Tests associations between SC deviations and ADHD symptoms in the ABCD dataset.  
-4. `S1_ADHDsymp_SCstrengthDeviation_Chinese.Rmd`: Tests associations between SC deviations and ADHD symptoms, and examines baseline deviations versus treatment responses in the Chinese cohort.  
-5. `S2_ADHDsymp_SCDeviation_Med_ABCD.qmd`: Performs mediation analyses of age, deviations, and symptoms.  
-6. `S3_delta_deviation_delta_symptom_ABCD.qmd`: Tests within-subject associations between rates of change in deviations and rates of change in symptoms.  
-7. `S4_ADHDsymp_medication_PKU6.qmd`: Examines changes in deviations following medication treatment.  
+1. `S1_ADHDsymp_SCstrengthDeviation_ABCD.Rmd`: Tests associations between SC deviations and ADHD symptoms in the ABCD dataset.  
+2. `S1_ADHDsymp_SCstrengthDeviation_Chinese.Rmd`: Tests associations between SC deviations and ADHD symptoms, and examines baseline deviations versus treatment responses in the Chinese cohort.  
+3. `S2_ADHDsymp_SCDeviation_Med_ABCD.qmd`: Performs mediation analyses of age, deviations, and symptoms.  
+4. `S3_delta_deviation_delta_symptom_ABCD.qmd`: Tests within-subject associations between rates of change in deviations and rates of change in symptoms.  
+5. `S4_ADHDsymp_medication_PKU6.qmd`: Examines changes in deviations following medication treatment.  
 
 ## functions & gamfunction
 These two folders contain the R functions required for conducting the analyses in this study.  
