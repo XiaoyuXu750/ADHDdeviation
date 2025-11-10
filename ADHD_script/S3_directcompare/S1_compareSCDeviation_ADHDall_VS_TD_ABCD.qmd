@@ -1,0 +1,152 @@
+---
+title: "S1_compareSCdeviation_ADHDall_VS_TD"
+author:
+  - name: Xiaoyu Xu
+    orcid: 0000-0002-7349-3366
+    email: xuxiaoyu@cibr.ac.cn
+    url: https://scholar.google.com/citations?user=G0jeI1AAAAAJl
+    affiliation: 
+      - name: Chinese Institute for Brain Research, Beijing (CIBR)
+        group: CUIZAIXU Lab
+        url: https://cuilab.cibr.ac.cn/
+date: "2025-06-16"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    theme: Materia
+    toc: true
+    toc_depth: 3
+    toc-expand: 1
+    toc_float: true
+    toc-location: left
+    number-sections: true
+    number-depth: 3
+    embed-resources: true
+---
+
+```{r}
+#| label: load-packages-data
+#| include: false
+rm(list=ls())
+library(ggplot2)
+library(corrplot)
+library(RColorBrewer)
+library(tidyverse)
+library(mgcv)
+library(lme4)
+library(openxlsx)
+library(parallel)
+library(scales)
+library(psych)
+library(reshape)
+library(patchwork)
+library(ecostats)
+
+# set resolution
+Yeoresolution <- 17
+if (Yeoresolution == 7){
+  Yeoresolution.delLM = 6
+}else if (Yeoresolution == 17){
+  Yeoresolution.delLM = 15
+}
+element_num <- Yeoresolution.delLM*(Yeoresolution.delLM+1)/2
+
+# input directory
+wd <- getwd()
+homepath <- str_split_i(wd, "Normative_model", 1)
+demopath <- paste0(homepath, '/Normative_model/demography')
+interfileFolder <- paste0(homepath, '/Normative_model/interfileFolder_ABCD')
+functionFolder <- paste0(homepath, "/Normative_model/functions")
+resultFolder <- paste0(homepath, "/Normative_model/results_ABCD")
+functionFolder.SCDev <- paste0(homepath, "/SC_development/Rcode_SCdevelopment/gamfunction")
+FigureFolder <- paste0(homepath, '/Normative_model/Figures_ABCD/Yeo', Yeoresolution,'/CV75')
+
+source(paste0(functionFolder, "/plotmatrix.R"))
+source(paste0(functionFolder.SCDev, "/SCrankcorr.R"))
+source(paste0(functionFolder.SCDev, "/plotdata_generate.R"))
+source(paste0(functionFolder, "/lmsymp.R"))
+source(paste0(functionFolder.SCDev, "/gamm_factor_interaction.R"))
+# load data
+SCdata.sum75.merge.ADHDTD <- readRDS(paste0(interfileFolder, '/SCdata_Yeo',Yeoresolution, '_CV75_sumSCinvnode.deviations_TDtest_ADHD.rds'))
+SCdata.sum75.merge.ADHDTD$sex <- as.factor(SCdata.sum75.merge.ADHDTD$sex)
+SCdata.sum75.merge.ADHDTD$meanFD <- as.numeric(SCdata.sum75.merge.ADHDTD$meanFD)
+SCdata.sum75.merge.ADHDTD$if_TD <- factor(SCdata.sum75.merge.ADHDTD$if_TD, levels = c("TD", "ADHD"))
+
+
+```
+
+
+
+## Step1 Interaction analysis of age * diagnosis effects on SC deviations.
+
+```{r}
+
+if (str_detect(wd, "cuizaixu_lab")){
+  set.seed(925)
+  knots = 3
+  int_var <- "if_TD"
+  Int.results <- mclapply(1:element_num, function(i){
+    dependentvar <- paste0("SC.", i, "_deviationZ")
+    region <- dependentvar
+    dataname <- "SCdata.sum75.merge.ADHDTD"
+    smooth_var <- "age"
+    covariates <- "sex+meanFD"
+    print(paste("Dependent var is", region, ", independent var is", smooth_var, ", interaction var is", int_var))
+    gam.res <- gamm.smooth.predict.interaction(region, dataname, smooth_var, int_var, covariates=covariates, knots, set_fx = T)
+    gam.res <- as.data.frame(gam.res)
+    gam.res$SClabel <- dependentvar
+    
+    return(gam.res)
+  }, mc.cores=50)
+  
+  Int.results.df <- do.call(rbind, Int.results)
+  saveRDS(Int.results.df, paste0(interfileFolder, "/Deviation_TDtest-ADHDall_SC", element_num,".rds"))
+}else{
+  Int.results.df <- readRDS(paste0(interfileFolder, "/Deviation_TDtest-ADHDall_SC", element_num,".rds"))
+}
+
+Int.results.df_final <- Int.results.df[seq(from=2, to=2*element_num, by = 2),]
+Int.results.df_final$bootstrap_pvalue.fdr <- p.adjust(Int.results.df_final$bootstrap_pvalue, method = "fdr")
+Int.results.df_final$bootstrap.P.disease.fdr <- p.adjust(Int.results.df_final$bootstrap.P.disease, method = "fdr")
+Int.results.df_final[,3:10] <- lapply(Int.results.df_final[,3:10], as.numeric)
+summary(Int.results.df_final)
+
+print(paste0(sum(Int.results.df_final$bootstrap_pvalue.fdr < 0.1), " edges have significant interaction age effects by ADHD diagnosis after FDR correction."))
+# Yeo17: 2
+print(paste0(sum(Int.results.df_final$bootstrap_pvalue < 0.05), " edges have significant interaction age effects by ADHD diagnosis before FDR correction."))
+# Yeo17: 24
+print(paste0(sum(Int.results.df_final$bootstrap.P.disease.fdr < 0.05), " edges have significant diagnosis effects on SC strength after FDR correction."))
+# Yeo17: 1
+print(paste0(sum(Int.results.df_final$bootstrap.P.disease < 0.05), " edges have significant diagnosis effects on SC strength before FDR correction."))
+# Yeo17: 14
+
+tabInt <- Int.results.df_final[Int.results.df_final$bootstrap.P.disease.fdr<0.05,]
+print(tabInt)
+
+# plot
+lmthr <- max(abs(Int.results.df_final$T.disease))
+axeslabels=c("VS.P", "SM.A", "VS.C", "SM.B", "DA.A", "DA.B", "FP.C", "DM.C", "VA.A", "TP", "FP.A", "VA.B", "DM.A", "FP.B", "DM.B") 
+axeslabelsGap=T
+PaletteSet <- list(Name="RdBu", drirection=-1, lmmin = -lmthr, lmmax = lmthr, anglex=45, angley=45,hjustx = 1, hjusty = 1, vjustx = 1, vjusty=0.5)
+
+FigintT <- plotmatrix(dataname="Int.results.df_final", "T.disease", ds.resolution=Yeoresolution.delLM, Pvar="bootstrap.P.disease.fdr", NAcol="white", lmthr=lmthr, axeslabels, axeslabelsGap=T, linerange_frame=NA, Pvar.noFDR=NA)
+
+
+ggsave(paste0(FigureFolder, "/SCstrength_Age/Deviationcompare/Matrix", Yeoresolution.delLM,"_DeviationCompare_TD_ADHDall_T.tiff"),FigintT, height=16, width=18, units = "cm")
+
+
+## WB deviation
+knots = 3
+int_var <- "if_TD"
+dataname <- "SCdata.sum75.merge.ADHDTD"
+smooth_var <- "age"
+covariates <- "sex+meanFD"
+
+region <- "WB_SCmean_deviationZ"
+gam.res <- gamm.smooth.predict.interaction(region, dataname, smooth_var, int_var, covariates=covariates, knots, set_fx = T)
+print(gam.res)
+
+
+```
+

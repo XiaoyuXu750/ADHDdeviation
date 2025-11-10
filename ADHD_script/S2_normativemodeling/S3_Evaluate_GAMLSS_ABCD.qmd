@@ -1,0 +1,272 @@
+---
+title: "S6_Evaluate_GAMLSS_ABCD"
+author:
+  - name: Xiaoyu Xu
+    orcid: 0000-0002-7349-3366
+    email: xuxiaoyu@cibr.ac.cn
+    url: https://scholar.google.com/citations?user=G0jeI1AAAAAJl
+    affiliation: 
+      - name: Chinese Institute for Brain Research, Beijing (CIBR)
+        group: CUIZAIXU Lab
+        url: https://cuilab.cibr.ac.cn/
+date: "2025-09-20"
+format: 
+  html:
+    code-fold: true
+    code-tools: true
+    theme: Materia
+    toc: true
+    toc_depth: 3
+    toc-expand: 1
+    toc_float: true
+    toc-location: left
+    number-sections: true
+    number-depth: 3
+    embed-resources: true
+---
+
+```{r}
+#| label: load-packages-data
+#| include: false
+
+rm(list=ls())
+library(ggplot2)
+library(tidyverse)
+library(openxlsx)
+library(parallel)
+library(gamlss)
+library(scales)
+library(tableone)
+#library(MatchIt)
+library(moments)
+# set resolution
+Yeoresolution <- 17
+if (Yeoresolution == 7){
+  Yeoresolution.delLM = 6
+}else if (Yeoresolution == 17){
+  Yeoresolution.delLM = 15
+}
+element_num <- Yeoresolution.delLM*(Yeoresolution.delLM+1)/2
+# input directory
+wd <- getwd()
+homepath <- str_split_i(wd, "Normative_model", 1)
+demopath <- paste0(homepath, '/Normative_model/demography')
+interfileFolder <- paste0(homepath, '/Normative_model/interfileFolder_ABCD')
+functionFolder <- paste0(homepath, "/Normative_model/functions")
+resultFolder <- paste0(homepath, "/Normative_model/results_ABCD")
+functionFolder.SCDev <- paste0(homepath, "/SC_development/Rcode_SCdevelopment/gamfunction")
+FigureFolder <- paste0(homepath, '/Normative_model/Figures_ABCD/Yeo', Yeoresolution,'/CV75')
+
+# Load data
+SCdata <- readRDS(paste0(interfileFolder, '/SCdata_Yeo',Yeoresolution, '_CV75_sumSCinvnode.sum.msmtcsd.merge.rds'))
+SCdata$sex <- as.factor(SCdata$demo_sex_v2)
+
+# data clean
+SCdata <- SCdata %>% mutate(WB_SCmean = rowMeans(dplyr::select(.,starts_with("SC."))))
+
+# source function
+source(paste0(functionFolder, "/Construct_gamlss_set.R"))
+source(paste0(functionFolder, "/plotmatrix.R"))
+
+SCdata.TD.trainset <- readRDS(paste0(interfileFolder, "/SCdata.TD.trainset_SCYeo", element_num, ".rds"))
+SCdata.TD.testset <- readRDS(paste0(interfileFolder, "/SCdata.TD.testset_SCYeo", element_num, ".rds"))
+
+mod.training.sum <- readRDS(paste0(interfileFolder, "/GAMLSS_Yeo", Yeoresolution,".TDtraining.sum.rds"))
+mod.training.WB <- readRDS(paste0(interfileFolder, "/GAMLSS_Yeo", Yeoresolution,"_WBSCmean.TDtraining.sum.rds"))
+
+```
+
+
+## Step1 Compute the Skewness and Kurtosis
+
+The normalized quantile residuals of our normative model were checked to evaluate the goodness of fit.
+The quantile residuals should be normal distributed.
+In GAMLSS, the normalized quantile residuals (sometimes called randomized quantile residuals) can be extracted numerically and then used to compute skewness and kurtosis.
+
+1) Inspect four plots related to residuals. The residuals against the fitted values of mu and the index were evenly distributed around the horizontal line at 0. Moreover, the kernel density estimation of the residuals displayedan approximate normal distribution, and the normal quantile-quantile (Q-Q) plots exhibitedan approximately linear trend with an intercept of 0 and a slope of 1. 2) Adopt the detrended transformed Owen’s plots of the fitted normalized quantile residuals to evaluate the performance of the models. The function uses Owen’s method to construct a nonparametric confidence interval for the true distribution.The zero horizontal line was within the confidence intervals, suggesting that the residuals followed a normal distribution. Taken together, these results showed that our model fits the sample data appropriately.
+
+
+```{r}
+
+## WB_SCmean
+resid_nqr <- residuals(mod.training.WB$mod.tmp, what ="z-scores", type="simple")
+skew_resid <- skewness(resid_nqr, na.rm = TRUE)
+kurt_resid <- kurtosis(resid_nqr, na.rm = TRUE)
+
+## Edges
+nqr_distribute.df <- data.frame(SClabel = paste0("SC.", 1:element_num))
+for (i in 1:element_num){
+  region <- paste0("SC.", i)
+  
+  modtmp <- mod.training.sum[[i]]$mod.tmp
+  
+  resid_nqr <- residuals(modtmp, what ="z-scores", type="simple")
+  
+  normtest <- shapiro.test(resid_nqr)
+  
+  skew_resid <- skewness(resid_nqr, na.rm = TRUE)
+  kurt_resid <- kurtosis(resid_nqr, na.rm = TRUE)
+  
+  nqr_distribute.df$skew[i] <- skew_resid
+  nqr_distribute.df$kurt[i] <- kurt_resid
+  nqr_distribute.df$norm.P[i] <- normtest$p.value
+}
+
+## Plot
+# WB mean SC
+tiff(filename = paste0(FigureFolder, "/Normative_Evaluation/Residualplots_WBmeanSC.tiff"), width=14, height=14, units = "cm", res=300)
+newpar <- par(mfrow = c(2, 2), mar = par("mar") + c(0, 1, 0,0),
+              col.axis = "black", col = "black", col.main = "black",
+              col.lab = "black", pch = "+", cex = 0.45, cex.lab = 2,
+              cex.axis = 2, cex.main = 2)
+plot(mod.training.WB$mod.tmp, par=newpar, asp = 1.2)
+dev.off()
+
+tiff(filename = paste0(FigureFolder, "/Normative_Evaluation/Owenplots_WBmeanSC.tiff"), width=7, height=7, units = "cm", res=300)
+newpar <- par(mar = par("mar") + c(0, 1, 0,0),
+              col.axis = "black", col = "black", col.main = "black",
+              col.lab = "black", pch = "+", cex = 0.45, cex.lab = 2,
+              cex.axis = 2, cex.main = 2)
+dtop(mod.training.WB$mod.tmp, par=newpar, asp = 0.87, main="Owen plot")
+dev.off()
+
+
+# Skewness
+PaletteSet <- list(Name="YlOrRd", drirection=1, lmmin = -0.5, lmmax = 0.5, anglex=45, angley=45, hjustx = 1, hjusty = 1, vjustx = 1, vjusty=0.3)
+axeslabels=c("VS.P", "SM.A", "VS.C", "SM.B", "DA.A", "DA.B", "FP.C", "DM.C", "VA.A", "TP", "FP.A", "VA.B", "DM.A", "FP.B", "DM.B") 
+Mat.skew <- plotmatrix(dataname="nqr_distribute.df", variable="skew", ds.resolution=Yeoresolution.delLM, Pvar=NA, NAcol="white", lmthr=NA, axeslabels=axeslabels, axeslabelsGap=F, linerange_frame=NA, PaletteSet=PaletteSet)
+Mat.skew
+
+ggsave(paste0(FigureFolder, "/Normative_Evaluation/Mat_skew.tiff"), Mat.skew, height = 14, width = 16, units = "cm")
+
+# Kurtosis
+PaletteSet <- list(Name="YlOrRd", drirection=1, lmmin = 2, lmmax = 4, anglex=45, angley=45, hjustx = 1, hjusty = 1, vjustx = 1, vjusty=0.3)
+axeslabels=c("VS.P", "SM.A", "VS.C", "SM.B", "DA.A", "DA.B", "FP.C", "DM.C", "VA.A", "TP", "FP.A", "VA.B", "DM.A", "FP.B", "DM.B") 
+Mat.kurt <- plotmatrix(dataname="nqr_distribute.df", variable="kurt", ds.resolution=Yeoresolution.delLM, Pvar=NA, NAcol="white", lmthr=NA, axeslabels=axeslabels, axeslabelsGap=F, linerange_frame=NA, PaletteSet=PaletteSet)
+Mat.kurt
+
+ggsave(paste0(FigureFolder, "/Normative_Evaluation/Mat_kurt.tiff"), Mat.kurt, height = 14, width = 16, units = "cm")
+
+```
+
+
+## Step2 Model sensitivity analyses (bootstrap)
+
+To determine reliability and stability of our GAMLSS fitted trajectories, and to obtain confidence intervals on all parameter estimates obtained from the GAMLSS fitting procedure as described above, we ran 1,000 bootstrap iterations with stratified sampling with replacement. The bootstrap replicates were stratified by sex and site, which maintains the relative proportions of the original datasets.
+
+An average CV was computed for each edge to reflect the overall variability of bootstrap iterations.
+
+```{r}
+# WB_meanSC
+bootstrapdir <- paste0(interfileFolder, "/bootstrap")
+centile_female_boot <- list()
+centile_male_boot <- list()
+centile_boot <- list()
+for (i in 1:1000) {
+  centile.tmp <- readRDS(paste0(bootstrapdir, "/WB_SCmean/centile_bootstrap_", i, ".rds"))
+  if (centile.tmp$converged==T){
+    centile_F.tmp <- apply(centile.tmp$Centiles_female, c(2,3), mean)
+    centile_female_boot[[i]] <- centile_F.tmp
+    centile_M.tmp <- apply(centile.tmp$Centiles_male, c(2,3), mean)
+    centile_male_boot[[i]] <- centile_M.tmp
+    centile_boot[[i]] <- (centile_F.tmp+centile_M.tmp) / 2
+  }else{
+    centile_female_boot[[i]] <- NA
+    centile_male_boot[[i]] <- NA
+    centile_boot[[i]] <- NA
+  }
+}
+print(paste0(length(which(is.na(centile_female_boot))), " iterations are not converged."))
+
+centile_boot <- centile_boot[!is.na(centile_boot)]
+centile_boot_P50 <- lapply(centile_boot, function(x) x[2,])
+centile_boot_P50 <- do.call(rbind, centile_boot_P50)
+
+sd_boot_P50 <- unlist(lapply(1:1000, function(x) sd(centile_boot_P50[,x])))
+mean_boot_P50 <- unlist(lapply(1:1000, function(x) mean(centile_boot_P50[,x])))
+cv_boot_P50 <- sd_boot_P50 / mean_boot_P50
+Average_cv <- mean(cv_boot_P50) # 0.005877198
+
+P97.5_boot_P50 <- unlist(lapply(1:1000, function(x) quantile(centile_boot_P50[,x], 0.975)))
+P2.5_boot_P50 <- unlist(lapply(1:1000, function(x) quantile(centile_boot_P50[,x], 0.025)))
+
+## Plot
+agevector <- seq(min(SCdata.TD.trainset$age), max(SCdata.TD.trainset$age), length.out = 1000)
+
+ggplot()+
+  geom_point(data=SCdata.TD.trainset, aes(x=age, y=WB_SCmean), color="grey", alpha=0.5)+
+  geom_line(aes(x=agevector, y=mean_boot_P50), linetype="solid", linewidth=1.5)+
+  geom_line(aes(x=agevector, y=P97.5_boot_P50), linetype=2, linewidth=1)+
+  geom_line(aes(x=agevector, y=P2.5_boot_P50), linetype=2, linewidth=1)+
+  labs(x="Age (years)", y="SC strength", title="Bootstrap 95% CI of Whole-brain averaged SC strength")+
+  theme_classic()+
+  theme(axis.text=element_text(size=18, color="black"), 
+        axis.title =element_text(size=18, color="black"),aspect.ratio = 0.8,
+        plot.background=element_rect(fill="white"),
+        panel.background=element_rect(fill="white"),
+        plot.title = element_text(size=18, hjust = 0.5),
+        legend.text = element_text(size=18, color="black"), legend.title = element_text(size=20, color="black"))
+
+ggsave(paste0(FigureFolder, "/Normative_Evaluation/bootstrap_95CI_WBmeanSC_all.tiff"), width=16, height=14, units = "cm")
+
+## Each edge
+if (! file.exists(paste0(resultFolder, "/Average_bootstrap_cv_GAMLSS.csv"))){
+  Average_cv.df <- data.frame(SClabel = paste0("SC.", 1:element_num))
+  for (x in 1:element_num){
+    region <- paste0("SC.", x)
+    
+    centile_female_boot <- list()
+    centile_male_boot <- list()
+    centile_boot <- list()
+    for (i in 1:1000) {
+      if (file.exists(paste0(bootstrapdir, "/", region,"/centile_bootstrap_", i, ".rds"))){
+        centile.tmp <- readRDS(paste0(bootstrapdir, "/", region,"/centile_bootstrap_", i, ".rds"))
+        if (centile.tmp$converged==T){
+          centile_F.tmp <- apply(centile.tmp$Centiles_female, c(2,3), mean)
+          centile_female_boot[[i]] <- centile_F.tmp
+          centile_M.tmp <- apply(centile.tmp$Centiles_male, c(2,3), mean)
+          centile_male_boot[[i]] <- centile_M.tmp
+          centile_boot[[i]] <- (centile_F.tmp+centile_M.tmp) / 2
+        }else{
+          centile_female_boot[[i]] <- NA
+          centile_male_boot[[i]] <- NA
+          centile_boot[[i]] <- NA
+        }
+      }
+    }
+    print(paste0(region, ": ", length(which(is.na(centile_female_boot))), " iterations are not converged."))
+    
+    centile_boot <- centile_boot[!is.na(centile_boot)]
+    centile_boot_P50 <- lapply(centile_boot, function(x) x[2,])
+    centile_boot_P50 <- do.call(rbind, centile_boot_P50)
+    
+    sd_boot_P50 <- unlist(lapply(1:1000, function(x) sd(centile_boot_P50[,x])))
+    mean_boot_P50 <- unlist(lapply(1:1000, function(x) mean(centile_boot_P50[,x])))
+    cv_boot_P50 <- sd_boot_P50 / mean_boot_P50
+    Average_cv <- mean(cv_boot_P50) # 0.005877198
+    Average_cv.df$meanCV[x] <- Average_cv
+  }
+  
+  write.csv(Average_cv.df, paste0(resultFolder, "/Average_bootstrap_cv_GAMLSS.csv"), row.names = F)
+}
+
+Average_cv.df <- read.csv(paste0(resultFolder, "/Average_bootstrap_cv_GAMLSS.csv"))
+
+PaletteSet <- list(Name="YlOrRd", drirection=1, lmmin = 0, lmmax = 0.09, anglex=45, angley=45, hjustx = 1, hjusty = 1, vjustx = 1, vjusty=0.3)
+axeslabels=c("VS.P", "SM.A", "VS.C", "SM.B", "DA.A", "DA.B", "FP.C", "DM.C", "VA.A", "TP", "FP.A", "VA.B", "DM.A", "FP.B", "DM.B") 
+Mat.cv <- plotmatrix(dataname="Average_cv.df", variable="meanCV", ds.resolution=Yeoresolution.delLM, Pvar=NA, NAcol="white", lmthr=NA, axeslabels=axeslabels, axeslabelsGap=F, linerange_frame=NA, PaletteSet=PaletteSet)
+Mat.cv
+
+ggsave(paste0(FigureFolder, "/Normative_Evaluation/Mat_CV.tiff"), Mat.cv, height = 14, width = 16, units = "cm")
+
+```
+
+
+
+
+
+
+
+
+
+

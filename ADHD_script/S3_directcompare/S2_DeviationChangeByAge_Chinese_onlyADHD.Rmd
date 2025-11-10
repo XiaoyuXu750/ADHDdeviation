@@ -1,0 +1,361 @@
+---
+title: "S2_DeviationChangeByAge"
+author: "Xiaoyu Xu"
+date: "2025-06-16"
+output: html_document
+---
+
+This script is to test whether the deviations or normalized symptoms decreased with age in ADHD group.
+
+```{r setup, include=FALSE}
+rm(list=ls())
+library(mgcv)
+library(parallel)
+library(tidyverse)
+library(patchwork)
+library(circlize)
+library(RColorBrewer)
+# set resolution
+Yeoresolution <- 17
+if (Yeoresolution == 7){
+  Yeoresolution.delLM = 6
+}else if (Yeoresolution == 17){
+  Yeoresolution.delLM = 15
+}
+element_num <- Yeoresolution.delLM*(Yeoresolution.delLM+1)/2
+
+# input directory
+wd <- getwd()
+homepath <- str_split_i(wd, "Normative_model", 1)
+demopath <- paste0(homepath, '/Normative_model/demography')
+interfileFolder <- paste0(homepath, '/Normative_model/interfileFolder_EFNYnoCCNP')
+interfileFolder_ABCD <- paste0(homepath, '/Normative_model/interfileFolder_ABCD')
+functionFolder <- paste0(homepath, "/Normative_model/functions")
+resultFolder <- paste0(homepath, "/Normative_model/results_EFNYnoCCNP")
+resultFolder_ABCD <- paste0(homepath, "/Normative_model/results_ABCD")
+functionFolder.SCDev <- paste0(homepath, "/SC_development/Rcode_SCdevelopment/gamfunction")
+FigureFolder <- paste0(homepath, '/Normative_model/Figures_EFNYnoCCNP/Yeo', Yeoresolution,'/CV75')
+
+source(paste0(functionFolder.SCDev, "/gamsmooth.R"))
+source(paste0(functionFolder, "/plotmatrix.R"))
+source(paste0(functionFolder, "/index2network.R"))
+source(paste0(functionFolder.SCDev, "/plotdata_generate.R"))
+source(paste0(functionFolder.SCDev, "/SCrankcorr.R"))
+source(paste0(functionFolder.SCDev, '/gamderivatives.R'))
+# Load data
+SCdata <- readRDS(paste0(interfileFolder, '/SCdata_Yeo',Yeoresolution, '_CV75.deviations_ADHD_All.rds'))
+
+Behavior <- read.csv(paste0(demopath, "/basic_demo_PKU6_addCBCL.csv"))
+Behavior$ID <- paste0("sub-", Behavior$ID)
+
+SCdata <- SCdata %>% left_join(dplyr::select(Behavior, ID, medication, IA_B, HI_B, TO_B, IA_F, HI_F, TO_F, ICV, Attention_6_18, ADHD_6_18), by="ID") %>% filter(diagnosis == "ADHD", visit=="0") %>% distinct(ID, .keep_all = T)
+SCdata$sex <- as.factor(SCdata$sex)
+SCdata$diagnosis <- factor(SCdata$diagnosis, levels = c("TD", "ADHD"))
+
+SCdata.ADHD <- SCdata %>% filter(diagnosis == "ADHD", visit=="0")
+table(SCdata.ADHD$diagnosis, SCdata.ADHD$site)
+
+# Deviation by Age
+sigedge.all.ABCD <- read.csv(paste0(resultFolder_ABCD, "/SCDeviationChange_gamresults_ADHD_sig.csv"))
+sigedge.all.ABCD <- sigedge.all.ABCD$parcel
+
+```
+
+## Test the age effects
+
+SC deviations ~ s(age, k=3, fx=T) + meanFD + sex
+
+```{r development}
+covariates<-"sex+mean_fd"
+dataname <- "SCdata.ADHD"
+smooth_var<-"age"
+symptomvar <- c("IA_B", "HI_B", "TO_B", "Attention_6_18", "ADHD_6_18")
+dependent.var <- c(paste0("SC.", 1:element_num, "_deviationZ"), symptomvar)
+
+if (!file.exists(paste0(interfileFolder, '/AllSCDeviation_NormSymptom_Age_Yeo', Yeoresolution,'_CV75_ADHD_all.rds'))){
+  print(dataname)
+  
+  resultsum <- mclapply(1:length(dependent.var), function(x){
+    region<-dependent.var[x]
+    if (str_detect(region, "SC.")==F){
+      covariates = "sex"
+    }
+    gamresult<-gam.fit.smooth(region, dataname, smooth_var, covariates, knots=3, set_fx = T, stats_only = T, mod_only = FALSE)
+    gamresult<-as.data.frame(gamresult)
+    return(gamresult)
+  }, mc.cores = 30)
+  
+  gamresultsum.df <- do.call(rbind, lapply(resultsum, function(x) data.frame(x)))
+  gamresultsum.df[,c(2:10)]<-lapply(gamresultsum.df[,c(2:10)], as.numeric)
+  
+  saveRDS(gamresultsum.df, paste0(interfileFolder, '/AllSCDeviation_NormSymptom_Age_Yeo', Yeoresolution,'_CV75_ADHD_all.rds'))
+}
+
+
+gamresultsum.df.ADHD <- readRDS(paste0(interfileFolder, '/AllSCDeviation_NormSymptom_Age_Yeo', Yeoresolution,'_CV75_ADHD_all.rds'))
+
+gamresultsum.df.ADHD.SC <- gamresultsum.df.ADHD[str_detect(gamresultsum.df.ADHD$parcel, "SC."),]
+gamresultsum.df.ADHD.SC$bootstrap_p.fdr <- p.adjust(gamresultsum.df.ADHD.SC$anova.smooth.pvalue, method="fdr")
+gamresultsum.df.ADHD.SC$partialRsq <- as.numeric(gamresultsum.df.ADHD.SC$partialRsq)
+SCrankcorr(gamresultsum.df.ADHD.SC, "partialRsq", Yeoresolution.delLM)
+#   ds.resolution Interest.var r.spearman   p.spearman
+# 1            15   partialRsq -0.3634113 4.509562e-05
+
+gamresultsum.df.ADHD.symp <- gamresultsum.df.ADHD[! str_detect(gamresultsum.df.ADHD$parcel, "SC."),]
+
+# Overlap with ABCD
+gamresultsum.df.ADHD.SC.ABCDsig <- gamresultsum.df.ADHD.SC %>% filter(parcel %in% sigedge.all.ABCD)
+gamresultsum.df.ADHD.SC.ABCDsig$bootstrap_p.fdr <- p.adjust(gamresultsum.df.ADHD.SC.ABCDsig$anova.smooth.pvalue, method="fdr")
+summary(gamresultsum.df.ADHD.SC.ABCDsig)
+## Organize the table
+out.ADHD.SC.ABCDsig <- gamresultsum.df.ADHD.SC.ABCDsig %>% dplyr::select(parcel, gam.smooth.F, bootstrap_p.fdr) %>% dplyr::rename(c(ADHD.age.F="gam.smooth.F",ADHD.age.Pfdr="bootstrap_p.fdr"))
+
+for (i in 1:nrow(out.ADHD.SC.ABCDsig)){
+  parcel <- out.ADHD.SC.ABCDsig$parcel[i]
+  parcel <- gsub("_deviationZ", "", parcel)
+  index <- as.numeric(gsub("SC.", "", parcel))
+  
+  label <- paste0(index2network(index)[2], "-", index2network(index)[1])
+  out.ADHD.SC.ABCDsig$parcel[i] <- label
+}
+write.csv(out.ADHD.SC.ABCDsig, paste0(resultFolder, "/SCdeviation_age_all14edges.csv"), row.names = F)
+
+gamresultsum.df.ADHD.SC.ABCDsig <- gamresultsum.df.ADHD.SC.ABCDsig %>% filter(bootstrap_p.fdr < 0.1)
+
+```
+
+
+## Plot the trajectories
+```{r}
+### plot the figures for SC
+## Models
+dataname <- "SCdata.ADHD"
+
+if (file.exists(paste0(interfileFolder, '/gammodelSigDiagnoseSCDeviation_NormSymptom_Age_Yeo', Yeoresolution,'_CV75_ADHD_all.rds'))){
+  resultsum <- list()
+  for (x in 1:nrow(gamresultsum.df.ADHD.SC.ABCDsig)){
+    region<-gamresultsum.df.ADHD.SC.ABCDsig$parcel[x]
+    gamresult<-gam.fit.smooth(region, dataname, smooth_var, covariates, knots=3, set_fx = T, stats_only = F, mod_only = T)
+    resultsum[[x]] <- gamresult
+  }
+  saveRDS(resultsum, paste0(interfileFolder, '/gammodelSigDiagnoseSCDeviation_NormSymptom_Age_Yeo', Yeoresolution,'_CV75_ADHD_all.rds'))
+  
+}
+
+gammod.ADHD <- readRDS(paste0(interfileFolder, '/gammodelSigDiagnoseSCDeviation_NormSymptom_Age_Yeo', Yeoresolution,'_CV75_ADHD_all.rds'))
+
+
+## Plot data
+agevector <- seq(min(SCdata.ADHD$age), max(SCdata.ADHD$age), length.out=1000)
+
+# ADHD
+if (file.exists(paste0(interfileFolder, '/plotdatasum.df_Yeo', Yeoresolution, '_SCdeviation_CV75_ADHD.rds')) == F){
+  plotdatasum.ADHD <- list()
+  for (x in 1:nrow(gamresultsum.df.ADHD.SC.ABCDsig)){
+    modobj <- gammod.ADHD[[x]]
+    plotdata<- plotdata_generate(modobj, "SCdata.ADHD", "age", agevector)
+    plotdata$SC_label <- names(plotdata)[ncol(plotdata)]
+    plotdata[,ncol(plotdata)-1] <- NULL
+    plotdatasum.ADHD[[x]] <- plotdata
+  }
+  
+  plotdatasum.ADHD.df <- do.call(rbind, lapply(plotdatasum.ADHD, function(x) data.frame(x)))
+  saveRDS(plotdatasum.ADHD.df, paste0(interfileFolder, '/plotdatasum.df_Yeo', Yeoresolution, '_SCdeviation_CV75_ADHD.rds'))
+  
+}else{
+  plotdatasum.ADHD.df <- readRDS(paste0(interfileFolder, '/plotdatasum.df_Yeo', Yeoresolution, '_SCdeviation_CV75_ADHD.rds'))
+}
+
+
+## Figure out
+rand.df <- data.frame(rand = rnorm(element_num, 0, 1))
+Yeo_10 <- SCrankcorr(rand.df, "rand", Yeoresolution.delLM, T)
+Yeo_10$SClabel <- paste0("SC.", 1:element_num)
+for (x in 1:nrow(gamresultsum.df.ADHD.SC.ABCDsig)){
+  region<-gamresultsum.df.ADHD.SC.ABCDsig$parcel[x]
+  if (str_detect(gamresultsum.df.ADHD$parcel[x], "SC.")){
+    label <- gsub("_deviationZ", "", region)
+    SCrank.tmp <- Yeo_10$SCrank[Yeo_10$SClabel==label]
+    gamresultsum.df.ADHD.SC$SCrank[x] <- SCrank.tmp
+  }else{
+      label <- region
+    }
+  
+  
+  data.ADHD <- plotdatasum.ADHD.df %>% filter(SC_label==region)
+  data.ADHD$diagnosis <- "ADHD"
+  
+  # Within ADHD
+  SCdata.ADHD$Deviation <- SCdata.ADHD[[region]]
+  SCdata.ADHD <- SCdata.ADHD %>% mutate(
+    Deviation=case_when(
+      Deviation > mean(Deviation)+3*sd(Deviation) ~ NA,
+      Deviation < mean(Deviation)-3*sd(Deviation) ~ NA,
+      .default = Deviation
+    )
+  )
+  if (str_detect(gamresultsum.df.ADHD$parcel[x], "SC.")){
+    subtitle <- bquote(
+        italic('F') == .(round(gamresultsum.df.ADHD.SC.ABCDsig$gam.smooth.F[x], 2)) * "," ~ 
+          italic(P) == .(round(gamresultsum.df.ADHD.SC.ABCDsig$bootstrap_p.fdr[x], 3))
+      )
+    title=paste0("Rank=", SCrank.tmp)
+    
+  }else{
+    subtitle <- bquote(
+        italic('F') == .(round(gamresultsum.df.ADHD.SC.ABCDsig$gam.smooth.F[(x - 9)], 2)) * "," ~ 
+          italic(P) == .(round(gamresultsum.df.ADHD.SC.ABCDsig$bootstrap_p.fdr[(x - 9)], 3))
+      )
+    title=NULL
+  }
+  
+  PointFig <- ggplot(data=data.ADHD)+
+    geom_point(data=SCdata.ADHD, aes(x=age, y=Deviation), color= "#810F7C", alpha=0.3)+
+    geom_ribbon(aes(x=age, ymin=selo, ymax=sehi), fill="#810F7C", alpha=0.3)+
+    geom_line(aes(x=age, y=fit), linewidth=1)+
+    geom_hline(yintercept = 0, color="black", linetype="dashed")+
+    scale_x_continuous(breaks = c(7,9, 11, 13, 15))+
+    scale_y_continuous(breaks = c(-4, -2, 0, 2, 4))+
+    labs(x="Age (years)", y="SC deviation")+
+    theme_classic()+
+    theme(axis.text=element_text(size=17.5, color="black"), 
+          axis.title =element_text(size=17.5, color="black"),aspect.ratio = 1,
+          plot.title = element_text(size=20.5, hjust=0.5, color="black"),
+          plot.background=element_rect(fill="transparent"),
+          panel.background=element_rect(fill="transparent"),
+          legend.position = 'none')
+  
+  
+  ggsave(paste0(FigureFolder, "/SCstrength_Age/Deviationcompare/DeviationChange/ADHD_", region, "_Point.tiff"), PointFig, width=13.5, height = 13.5, units = "cm")
+  
+  
+}
+Yeo_10$SClabel <- paste0(Yeo_10$SClabel, "_deviationZ")
+gamresultsum.df.ADHD.SC.ABCDsig <- gamresultsum.df.ADHD.SC.ABCDsig %>% left_join(Yeo_10, join_by(parcel==SClabel))
+
+write.csv(gamresultsum.df.ADHD.symp, paste0(resultFolder, "/SymptomChange_gamresults_ADHD.csv"), row.names = F)
+write.csv(gamresultsum.df.ADHD.SC.ABCDsig, paste0(resultFolder, "/SCDeviationChange_gamresults_ADHD_ABCDoverlap.csv"), row.names = F)
+
+# cross zero
+plotdatasum.ADHD.df.neg <- plotdatasum.ADHD.df %>% filter(selo < 0, sehi < 0)
+table(plotdatasum.ADHD.df.neg$SC_label)
+describeBy(plotdatasum.ADHD.df.neg$age, group=plotdatasum.ADHD.df.neg$SC_label, mat = T)
+
+```
+
+
+
+
+# Plot effect size
+```{r}
+## Plot effect size
+lmthr <- max(abs(gamresultsum.df.ADHD.SC$partialRsq))
+# ADHD
+SCrankcorr(gamresultsum.df.ADHD.SC, "partialRsq", Yeoresolution.delLM)
+# ADHD
+# 15	partialRsq	r=-0.3634113	P=4.509562e-05	
+
+# scatter plot
+df <- SCrankcorr(gamresultsum.df.ADHD.SC, "partialRsq", Yeoresolution.delLM, T)
+
+scatter <- ggplot(data=df)+
+    geom_point(aes(x=SCrank, y=partialRsq), size=1.8, color="#B2182B")+
+    geom_smooth(aes(x=SCrank, y=partialRsq), method ="lm", color="black", linewidth=1.2)+
+    #scale_color_distiller(type="seq", palette = "RdBu", limits=c(-lmthr, lmthr),direction = -1)+
+    labs(x="S-A connectional axis rank", y = expression("Age effect (partial " * italic(R)^2 * ")"))+
+    #scale_y_continuous(breaks = c(-0.015, -0.010, -0.005,0, 0.005, 0.010), labels = c(-15,-10, -5, 0, 5, 10))+
+    #scale_y_continuous(breaks = c(-0.003,0, 0.003, 0.006), labels = c(-3, 0, 3, 6))+
+    scale_x_continuous(breaks = c(0,20,40,60,80,100,120))+
+    theme_classic()+
+    theme(axis.text=element_text(size=19.8, color="black"), 
+        axis.title =element_text(size=19.8, color="black"),aspect.ratio = 0.98,
+        plot.background=element_rect(fill="white"),
+        panel.background=element_rect(fill="white"),
+        plot.title = element_text(size=16, hjust = 0.5),
+        legend.position = "none")
+
+ggsave(paste0(FigureFolder, '/SCstrength_Age/Deviationcompare/DeviationRsqADHD_SCrankcorr.tiff'),scatter, width=15, height =15, units = "cm")
+
+
+# Matrix
+gamresultsum.df.ADHD.SC <- gamresultsum.df.ADHD.SC %>% mutate(
+  bootstrap_p.fdr2 = case_when(parcel %in% gamresultsum.df.ADHD.SC.ABCDsig$parcel[gamresultsum.df.ADHD.SC.ABCDsig$bootstrap_p.fdr < 0.05] ~ 0.001,
+                               .default = 1),
+  bootstrap_p.ABCD = case_when(parcel %in% sigedge.all.ABCD ~ 0.001,
+                               .default = 1)
+)
+
+lmthr <- max(abs(gamresultsum.df.ADHD.SC$partialRsq))+0.0001
+axeslabels=c("VS.P", "SM.A", "VS.C", "SM.B", "DA.A", "DA.B", "FP.C", "DM.C", "VA.A", "TP", "FP.A", "VA.B", "DM.A", "FP.B", "DM.B")  # 0.08
+PaletteSet <- list(Name="RdBu", drirection=-1, lmmin = -lmthr, lmmax = lmthr, anglex=0, angley=0,hjustx = 1, hjusty = 1, vjustx = 1, vjusty=0.5)
+
+FigintR2 <- plotmatrix(dataname="gamresultsum.df.ADHD.SC", "partialRsq", ds.resolution=Yeoresolution.delLM, Pvar="bootstrap_p.fdr2", NAcol="gray", lmthr=lmthr, axeslabels, axeslabelsGap=F, linerange_frame=NA, PaletteSet=PaletteSet, Pvar.noFDR="bootstrap_p.ABCD")
+
+ggsave(paste0(FigureFolder, "/SCstrength_Age/Deviationcompare/Matrix", Yeoresolution.delLM,"_DeviationAge_Rsq_ADHD.tiff"),FigintR2, height=14, width=16, units = "cm")
+
+
+# chord diagram
+Yeo17_SAtab <- read.csv(paste0(resultFolder, '/Yeo17S400_SArank.csv'))
+Yeo17_SAtab$index <- c(0:17)
+limbicindex <- Yeo17_SAtab$index[str_detect(Yeo17_SAtab$NetworkLabel, "Limbic")]
+Yeo17_SAtab <- Yeo17_SAtab %>% filter(! index %in% limbicindex)
+Yeo17_SAtab$RGB <- c("white", "#771183", "#FF0200", "#4680B3", "#2ACCA5", "#499C3D", "#007512", "#C334F4", 
+                            "#F997D8", "#778CB3", "#E89321", "#8A314B", "#0D28FD", "#000083", "#F9FF04", "#D13F52")
+                            
+Yeo17_SAtab$NetworkLabe.short <- c("None", "VS.C", "VS.P", "SM.A", "SM.B", "DA.A", "DA.B", "VA.A", "VA.B", "FP.C", "FP.A", "FP.B", "TP", "DM.C", "DM.A", "DM.B")      
+Yeo17_SAtab <- Yeo17_SAtab[order(Yeo17_SAtab$MedianSA),]
+
+  
+gamresultsum.df.ADHD.SC <- gamresultsum.df.ADHD.SC %>% mutate(
+  partialRsq2 = case_when(
+    parcel %in% sigedge.all.ABCD ~ partialRsq,
+    .default = NA
+  ))
+
+gamresultsum.df.ADHD.SC$sig <- (gamresultsum.df.ADHD.SC$parcel %in% gamresultsum.df.ADHD.SC.ABCDsig$parcel)
+SigMat <- CorrMat <- matrix(NA, Yeoresolution.delLM, Yeoresolution.delLM)
+# edges
+CorrMat[lower.tri(CorrMat, diag=T)] <- gamresultsum.df.ADHD.SC$partialRsq2
+CorrMat[upper.tri(CorrMat)] <- t(CorrMat)[upper.tri(CorrMat)]
+delidx.row <- which(rowSums(is.na(CorrMat))==Yeoresolution.delLM)
+CorrMat <- CorrMat[-delidx.row, -delidx.row]
+# sig
+SigMat[lower.tri(SigMat, diag=T)] <- gamresultsum.df.ADHD.SC$sig
+SigMat[upper.tri(SigMat)] <- t(SigMat)[upper.tri(SigMat)]
+SigMat <- SigMat[-delidx.row, -delidx.row]
+# Section name
+axeslabels=c("VS.P", "SM.A", "VS.C", "SM.B", "DA.A", "DA.B", "FP.C", "DM.C", "VA.A", "TP", "FP.A", "VA.B", "DM.A", "FP.B", "DM.B")
+rownames(CorrMat) <- colnames(CorrMat) <- axeslabels[setdiff(1:Yeoresolution.delLM, delidx.row)]
+rownames(SigMat) <- colnames(SigMat) <- axeslabels[setdiff(1:Yeoresolution.delLM, delidx.row)]
+
+CorrMat[upper.tri(CorrMat)] <- NA
+SigMat[upper.tri(CorrMat)] <- NA
+grid.col <- setNames(Yeo17_SAtab$RGB[Yeo17_SAtab$NetworkLabe.short %in% rownames(CorrMat)], rownames(CorrMat))
+col_fun <- colorRamp2(seq(from=min(gamresultsum.df.ADHD.SC$partialRsq2, na.rm=T), to=-min(gamresultsum.df.ADHD.SC$partialRsq2, na.rm=T), length.out=9), rev(brewer.pal(11, "RdBu")[2:10]))
+
+CorrMat2 <- CorrMat
+CorrMat2[!is.na(CorrMat2)] <- 1
+
+ColMat <- col_fun(CorrMat)
+
+tiff(paste0(FigureFolder, "/SCstrength_Age/Deviationcompare/ChordPlot_AgePartialRsq_ABCDsig.tiff"), width = 15, height = 14, units = "cm", res = 300)
+circos.clear()
+circos.par(start.degree = 75)
+chordDiagram(x=CorrMat2, grid.col = grid.col, grid.border=NULL, col=ColMat, order=rownames(CorrMat),transparency = 0.5, directional = 0, self.link=1, link.lwd = 2, annotationTrack = "grid", preAllocateTracks = list(track.height = 0.12), big.gap=T)
+circos.track(track.index = 1, panel.fun = function(x, y) {
+  sector.name <- CELL_META$sector.index
+  if (sector.name %in% c("SM.B", "VS.P", "DM.A")) {
+    
+    circos.text(CELL_META$xcenter, CELL_META$ylim[1] + mm_y(8), sector.name,
+                facing = "clockwise", niceFacing = TRUE, cex = 1.6)
+  } else {
+    circos.text(CELL_META$xcenter, CELL_META$ylim[1] + mm_y(2), sector.name,
+                facing = "outside", niceFacing = TRUE, cex = 1.6)
+  }
+  
+}, bg.border = NA)
+
+dev.off()
+
+
+```
